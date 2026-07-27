@@ -36,4 +36,7 @@ cargo test --workspace
 ./scripts/smoke-test.sh
 ```
 
-The included GitHub Actions CI runs the compiler-backed checks on Ubuntu, macOS, and Windows; the Unix runners also execute the end-to-end FFmpeg smoke test.
+The included GitHub Actions CI runs compiler-backed checks on Ubuntu, macOS,
+and Windows. The Linux runner also executes the end-to-end FFmpeg smoke test;
+the Homebrew FFmpeg build on the hosted macOS runner does not include the
+`drawtext` filter required by that scenario.

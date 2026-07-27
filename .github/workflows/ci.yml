@@ -28,5 +28,5 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - name: Smoke test
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         run: bash scripts/smoke-test.sh
