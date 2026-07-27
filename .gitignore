@@ -1,0 +1,12 @@
+/target
+/data
+/dist
+/.codebase-memory
+.env
+*.mp4
+*.mov
+*.mkv
+*.wav
+*.mp3
+.DS_Store
+Thumbs.db

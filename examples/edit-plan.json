@@ -1,0 +1,11 @@
+{
+  "summary": "直式字幕版本",
+  "commands": [
+    { "type": "reframe", "width": 1080, "height": 1920 },
+    {
+      "type": "normalize_audio",
+      "target_lufs": -16.0
+    }
+  ],
+  "warnings": []
+}

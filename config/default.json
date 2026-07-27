@@ -1,0 +1,19 @@
+{
+  "data_dir": "./data",
+  "bind": "127.0.0.1:8787",
+  "ffmpeg": "ffmpeg",
+  "ffprobe": "ffprobe",
+  "default_project": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "sample_rate": 48000
+  },
+  "render": {
+    "video_codec": "libx264",
+    "audio_codec": "aac",
+    "preset": "medium",
+    "crf": 20,
+    "audio_bitrate": "192k"
+  }
+}

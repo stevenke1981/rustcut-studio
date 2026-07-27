@@ -1,0 +1,16 @@
+{
+  "language": "zh",
+  "segments": [
+    {
+      "start_ms": 500,
+      "end_ms": 2800,
+      "text": "這是範例逐字稿",
+      "speaker": "Speaker 1",
+      "words": [
+        { "start_ms": 500, "end_ms": 900, "text": "這是" },
+        { "start_ms": 1000, "end_ms": 1500, "text": "範例" },
+        { "start_ms": 1600, "end_ms": 2400, "text": "逐字稿" }
+      ]
+    }
+  ]
+}

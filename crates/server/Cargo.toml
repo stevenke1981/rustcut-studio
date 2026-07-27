@@ -1,0 +1,27 @@
+[package]
+name = "rustcut-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+clap.workspace = true
+dotenvy.workspace = true
+futures-util.workspace = true
+http.workspace = true
+mime_guess.workspace = true
+parking_lot.workspace = true
+rustcut-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

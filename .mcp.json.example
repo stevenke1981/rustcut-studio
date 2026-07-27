@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "rustcut": {
+      "command": "rustcut-mcp",
+      "args": ["--data-dir", "./data"],
+      "env": {
+        "RUSTCUT_FFMPEG": "ffmpeg",
+        "RUSTCUT_FFPROBE": "ffprobe"
+      }
+    }
+  }
+}
