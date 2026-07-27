@@ -25,12 +25,72 @@
         <button type="submit">匯入素材</button>
       </form>
       <div id="assetList" class="asset-list empty-state">尚未匯入素材</div>
+      <section class="toolbox" aria-labelledby="effectsTitle">
+        <div class="panel-title compact"><h2 id="effectsTitle">字幕與特效</h2><span>可復原</span></div>
+
+        <details open>
+          <summary>字幕</summary>
+          <form id="captionForm" class="effect-form">
+            <label>已有逐字稿的素材<select id="captionAsset" required><option value="">請先匯入逐字稿</option></select></label>
+            <div class="field-row">
+              <label>字級<input id="captionFontSize" type="number" min="8" max="512" value="54" /></label>
+              <label>字幕預設<select id="captionPreset"><option value="standard">標準字幕</option><option value="hormozi">Hormozi 衝擊字幕</option><option value="minimal">極簡字幕</option><option value="karaoke">逐字卡拉 OK</option><option value="word_pop">逐字彈出</option></select></label>
+            </div>
+            <button type="submit">產生字幕軌</button>
+          </form>
+        </details>
+
+        <details open>
+          <summary>字卡／動態字卡</summary>
+          <form id="textCardForm" class="effect-form">
+            <label>文字<input id="cardText" value="精彩時刻" required /></label>
+            <div class="field-row">
+              <label>開始（秒）<input id="cardStart" type="number" min="0" step="0.1" value="0.3" /></label>
+              <label>結束（秒）<input id="cardEnd" type="number" min="0.1" step="0.1" value="3.0" /></label>
+            </div>
+            <div class="field-row">
+              <label>位置<select id="cardPosition"><option value="top_left">左上角</option><option value="top">頂部</option><option value="top_right">右上角</option><option value="center">中央</option><option value="lower_third">下三分之一</option><option value="bottom_left">左下角</option><option value="bottom">底部</option><option value="bottom_right">右下角</option></select></label>
+              <label>動畫<select id="cardAnimation"><option value="none">無</option><option value="fade">淡入淡出</option><option value="slide_up">向上滑入</option><option value="slide_left">向左滑入</option><option value="pop">彈出</option></select></label>
+            </div>
+            <div class="field-row">
+              <label>文字色<input id="cardColor" type="color" value="#ffffff" /></label>
+              <label>底框色<input id="cardBoxColor" type="color" value="#111827" /></label>
+              <label class="check-field"><input id="cardBoxEnabled" type="checkbox" checked />底框</label>
+            </div>
+            <button type="submit">加入字卡</button>
+          </form>
+        </details>
+
+        <details>
+          <summary>影片邊框</summary>
+          <form id="borderForm" class="effect-form">
+            <div class="field-row">
+              <label>顏色<input id="borderColor" type="color" value="#ffffff" /></label>
+              <label>寬度<input id="borderWidth" type="number" min="1" max="256" value="12" /></label>
+            </div>
+            <button type="submit">套用全片邊框</button>
+          </form>
+        </details>
+
+        <details>
+          <summary>文字浮水印</summary>
+          <form id="watermarkForm" class="effect-form">
+            <label>浮水印文字<input id="watermarkText" value="RustCut Studio" required /></label>
+            <div class="field-row">
+              <label>位置<select id="watermarkPosition"><option value="bottom">底部</option><option value="bottom_left">左下角</option><option value="bottom_right">右下角</option><option value="top">頂部</option><option value="top_left">左上角</option><option value="top_right">右上角</option><option value="center">中央</option><option value="lower_third">下三分之一</option></select></label>
+              <label>透明度<input id="watermarkOpacity" type="range" min="0.1" max="1" step="0.05" value="0.65" /></label>
+            </div>
+            <button type="submit">加入全片浮水印</button>
+          </form>
+        </details>
+      </section>
     </aside>
 
     <section class="editor-panel">
       <div class="viewer-wrap">
         <video id="viewer" controls playsinline></video>
         <div id="viewerEmpty" class="viewer-empty">選擇素材以預覽</div>
+        <div id="effectPreview" class="effect-preview" aria-hidden="true"></div>
       </div>
       <div class="transport">
         <button id="undoBtn">復原</button>

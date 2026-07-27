@@ -53,6 +53,7 @@ function renderProject() {
   $("#projectMeta").textContent = `${project.timeline.settings.width}×${project.timeline.settings.height} · ${project.timeline.settings.fps} fps · rev ${project.revision}`;
   renderAssets(assets);
   renderTimeline(project.timeline);
+  renderEffectAssetOptions(assets);
 }
 
 function renderAssets(assets) {
@@ -103,9 +104,103 @@ function renderTimeline(timeline) {
         const start = clip.start_ms / duration * 100;
         const width = ((clip.source_out_ms - clip.source_in_ms) / Math.max(.01, clip.speed)) / duration * 100;
         const label = clip.text?.text || clip.name;
-        return `<div class="clip" style="left:${start}%;width:${Math.max(width, .6)}%" title="${escapeHtml(label)}">${escapeHtml(label)}</div>`;
+        const animation = clip.text?.animation && clip.text.animation !== "none" ? ` · ${clip.text.animation}` : "";
+        return `<div class="clip" style="left:${start}%;width:${Math.max(width, .6)}%" title="${escapeHtml(label + animation)}">${escapeHtml(label)}${animation ? `<small>${escapeHtml(animation)}</small>` : ""}</div>`;
       }).join("")}</div>
     </div>`).join("");
+}
+
+function renderEffectAssetOptions(assets) {
+  const select = $("#captionAsset");
+  const eligible = assets.filter(asset => state.project?.transcripts?.[asset.id]);
+  select.innerHTML = eligible.length
+    ? eligible.map(asset => `<option value="${asset.id}">${escapeHtml(asset.name)}</option>`).join("")
+    : '<option value="">請先匯入逐字稿</option>';
+}
+
+function textStyle({
+  text = "",
+  fontSize = 64,
+  color = "#ffffff",
+  position = "bottom",
+  animation = "none",
+  boxColor = null,
+  outline = false,
+  boxed = false,
+  shadow = false,
+  preset = null,
+} = {}) {
+  if (preset === "outline") {
+    outline = true;
+  }
+  if (preset === "boxed") {
+    boxed = true;
+  }
+  if (preset === "shadow") {
+    shadow = true;
+  }
+  return {
+    text,
+    font_file: null,
+    font_size: Number(fontSize),
+    color,
+    opacity: 1,
+    outline_color: "#000000",
+    outline_width: outline ? 4 : 2,
+    box_color: boxed ? `${boxColor}cc` : null,
+    box_padding: 20,
+    shadow_color: shadow ? "#000000cc" : null,
+    shadow_x: 4,
+    shadow_y: 4,
+    position,
+    alignment: "center",
+    animation,
+    animation_duration_ms: 420,
+  };
+}
+
+async function applyCommands(commands, successMessage) {
+  if (!state.project) throw new Error("請先建立或選擇專案");
+  setStatus("套用特效…");
+  state.project = await api(`/api/projects/${state.project.id}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ commands }),
+  });
+  renderProject();
+  setStatus(successMessage);
+  addMessage(successMessage, "assistant");
+}
+
+function timelineDurationMs() {
+  if (!state.project) return 0;
+  return state.project.timeline.tracks
+    .flatMap(track => track.clips)
+    .reduce(
+      (max, clip) =>
+        Math.max(
+          max,
+          clip.start_ms + Math.max(0, clip.source_out_ms - clip.source_in_ms) / Math.max(.01, clip.speed),
+        ),
+      0
+    );
+}
+
+function updateEffectPreview() {
+  const preview = $("#effectPreview");
+  const text = $("#cardText").value.trim();
+  if (!text) {
+    preview.textContent = "";
+    preview.className = "effect-preview";
+    return;
+  }
+  preview.textContent = text;
+  preview.style.color = $("#cardColor").value;
+  preview.style.background = $("#cardBoxEnabled").checked ? `${$("#cardBoxColor").value}cc` : "transparent";
+  preview.dataset.position = $("#cardPosition").value;
+  preview.className = `effect-preview animation-${$("#cardAnimation").value}`;
+  preview.getAnimations().forEach(animation => animation.cancel());
+  void preview.offsetWidth;
+  preview.classList.add("is-playing");
 }
 
 async function addAsset(assetId) {
@@ -196,6 +291,81 @@ $("#renderBtn").onclick = async () => {
     pollJob(job.id);
   } catch (error) { showError(error); }
 };
+
+$("#captionForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const assetId = $("#captionAsset").value;
+  if (!assetId) return showError(new Error("請先為素材匯入字幕或逐字稿"));
+  const preset = $("#captionPreset").value;
+  try {
+    await applyCommands([{
+      type: "add_captions",
+      asset_id: assetId,
+      preset,
+      style: textStyle({
+        fontSize: Number($("#captionFontSize").value),
+        position: "bottom",
+        boxed: true,
+        boxColor: "#000000",
+      }),
+    }], "字幕軌已產生");
+  } catch (error) { showError(error); }
+});
+
+$("#textCardForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const startMs = Math.round(Number($("#cardStart").value) * 1000);
+  const endMs = Math.round(Number($("#cardEnd").value) * 1000);
+  try {
+    await applyCommands([{
+      type: "add_text",
+      text: textStyle({
+        text: $("#cardText").value.trim(),
+        fontSize: 72,
+        color: $("#cardColor").value,
+        position: $("#cardPosition").value,
+        animation: $("#cardAnimation").value,
+        boxColor: $("#cardBoxEnabled").checked ? $("#cardBoxColor").value : null,
+      }),
+      start_ms: startMs,
+      end_ms: endMs,
+    }], "字卡已加入時間軸");
+  } catch (error) { showError(error); }
+});
+
+$("#borderForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    await applyCommands([{
+      type: "add_border",
+      color: $("#borderColor").value,
+      width: Number($("#borderWidth").value),
+    }], "全片邊框已套用");
+  } catch (error) { showError(error); }
+});
+
+$("#watermarkForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const duration = Math.round(timelineDurationMs());
+  try {
+    await applyCommands([{
+      type: "add_watermark",
+      text: $("#watermarkText").value.trim(),
+      font_file: null,
+      position: $("#watermarkPosition").value,
+      font_size: 32,
+      color: "#ffffff",
+      opacity: Number($("#watermarkOpacity").value),
+      start_ms: 0,
+      end_ms: duration || null,
+    }], "全片浮水印已加入");
+  } catch (error) { showError(error); }
+});
+
+["#cardText", "#cardPosition", "#cardAnimation", "#cardColor", "#cardBoxColor", "#cardBoxEnabled"]
+  .forEach(selector => $(selector).addEventListener("input", updateEffectPreview));
+updateEffectPreview();
+
 async function pollJob(jobId) {
   try {
     const job = await api(`/api/jobs/${jobId}`);

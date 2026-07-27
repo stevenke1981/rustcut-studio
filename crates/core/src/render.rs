@@ -439,6 +439,11 @@ fn append_video_effects(chain: &mut String, clip: &Clip, duration_seconds: f64) 
             } => {
                 chain.push_str(&format!(",crop={width}:{height}:{x}:{y}"));
             }
+            Effect::Border { color, width } => {
+                chain.push_str(&format!(
+                    ",drawbox=x=0:y=0:w=iw:h=ih:color={color}:t={width}"
+                ));
+            }
             Effect::NormalizeAudio { .. } => {}
         }
     }
@@ -463,7 +468,7 @@ fn append_audio_effects(chain: &mut String, clip: &Clip, duration_seconds: f64) 
             Effect::NormalizeAudio { target_lufs } => {
                 chain.push_str(&format!(",loudnorm=I={target_lufs}:TP=-1.5:LRA=11"));
             }
-            Effect::Crop { .. } => {}
+            Effect::Crop { .. } | Effect::Border { .. } => {}
         }
     }
 }
@@ -498,26 +503,78 @@ fn drawtext_filter(
     height: u32,
 ) -> String {
     let escaped_text = escape_drawtext(&text.text);
-    let (x, y) = text_position(text.position, text.alignment, width, height);
+    let (base_x, base_y) = text_position(text.position, text.alignment, width, height);
+    let animation_duration = (text.animation_duration_ms as f64 / 1_000.0)
+        .max(0.001)
+        .min(((end - start) / 2.0).max(0.001));
+    let progress = format!("min(1,max(0,(t-{start:.3})/{animation_duration:.3}))");
+    let mut x = base_x.clone();
+    let mut y = base_y.clone();
+    let mut alpha = format!("{:.4}", text.opacity.clamp(0.0, 1.0));
+    match text.animation {
+        crate::TextAnimation::None => {}
+        crate::TextAnimation::Fade => {
+            alpha = format!(
+                "{opacity:.4}*min({progress},min(1,max(0,({end:.3}-t)/{animation_duration:.3})))",
+                opacity = text.opacity.clamp(0.0, 1.0)
+            );
+        }
+        crate::TextAnimation::SlideUp => {
+            y = format!("h+(({base_y})-h)*({progress})");
+        }
+        crate::TextAnimation::SlideLeft => {
+            x = format!("w+(({base_x})-w)*({progress})");
+        }
+        crate::TextAnimation::Pop => {
+            y = format!("({base_y})+h*0.035*(1-({progress}))");
+            alpha = format!("{:.4}*({progress})", text.opacity.clamp(0.0, 1.0));
+        }
+    }
     let mut options = vec![
         format!("text='{escaped_text}'"),
         format!("fontsize={}", text.font_size),
         format!("fontcolor={}", text.color),
+        format!("alpha='{alpha}'"),
         format!("borderw={}", text.outline_width),
         format!("bordercolor={}", text.outline_color),
-        format!("x={x}"),
-        format!("y={y}"),
+        format!("x='{x}'"),
+        format!("y='{y}'"),
         format!("enable='between(t,{start:.3},{end:.3})'"),
     ];
-    if let Some(font_file) = &text.font_file {
+    if let Some(font_file) = text.font_file.as_deref() {
+        options.push(format!("fontfile='{}'", escape_filter_path(font_file)));
+    } else if let Some(font_file) = default_font_file() {
         options.push(format!("fontfile='{}'", escape_filter_path(font_file)));
     }
     if let Some(box_color) = &text.box_color {
         options.push("box=1".to_string());
         options.push(format!("boxcolor={box_color}"));
-        options.push("boxborderw=20".to_string());
+        options.push(format!("boxborderw={}", text.box_padding));
+    }
+    if let Some(shadow_color) = &text.shadow_color {
+        options.push(format!("shadowcolor={shadow_color}"));
+        options.push(format!("shadowx={}", text.shadow_x));
+        options.push(format!("shadowy={}", text.shadow_y));
     }
     format!("drawtext={}", options.join(":"))
+}
+
+fn default_font_file() -> Option<&'static str> {
+    #[cfg(windows)]
+    {
+        const WINDOWS_FALLBACKS: [&str; 3] = [
+            "C:/Windows/Fonts/msjh.ttc",
+            "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+        ];
+        WINDOWS_FALLBACKS
+            .into_iter()
+            .find(|font| Path::new(font).is_file())
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 fn text_position(
@@ -526,15 +583,23 @@ fn text_position(
     _width: u32,
     height: u32,
 ) -> (String, String) {
-    let x = match alignment {
-        TextAlignment::Left => "w*0.08".to_string(),
-        TextAlignment::Center => "(w-text_w)/2".to_string(),
-        TextAlignment::Right => "w-text_w-w*0.08".to_string(),
+    let x = match position {
+        TextPosition::TopLeft | TextPosition::BottomLeft => "w*0.05".to_string(),
+        TextPosition::TopRight | TextPosition::BottomRight => "w-text_w-w*0.05".to_string(),
+        _ => match alignment {
+            TextAlignment::Left => "w*0.08".to_string(),
+            TextAlignment::Center => "(w-text_w)/2".to_string(),
+            TextAlignment::Right => "w-text_w-w*0.08".to_string(),
+        },
     };
     let y = match position {
         TextPosition::Top => "h*0.08".to_string(),
+        TextPosition::TopLeft => "h*0.08".to_string(),
+        TextPosition::TopRight => "h*0.08".to_string(),
         TextPosition::Center => "(h-text_h)/2".to_string(),
         TextPosition::Bottom => format!("{}-text_h-h*0.08", height),
+        TextPosition::BottomLeft => format!("{}-text_h-h*0.08", height),
+        TextPosition::BottomRight => format!("{}-text_h-h*0.08", height),
         TextPosition::LowerThird => "h*0.72".to_string(),
     };
     (x, y)
@@ -603,5 +668,61 @@ mod tests {
     #[test]
     fn escapes_drawtext_content() {
         assert_eq!(escape_drawtext("a:b%"), "a\\:b\\%");
+    }
+
+    #[test]
+    fn builds_animated_text_with_shadow_and_opacity() {
+        let text = crate::TextOverlay {
+            text: "動態字卡".to_string(),
+            opacity: 0.7,
+            shadow_color: Some("#000000cc".to_string()),
+            position: TextPosition::Center,
+            animation: crate::TextAnimation::Pop,
+            animation_duration_ms: 500,
+            ..crate::TextOverlay::default()
+        };
+        let filter = drawtext_filter(&text, 1.0, 4.0, 1920, 1080);
+        assert!(filter.contains("fontsize=64"));
+        assert!(filter.contains("alpha='0.7000*("));
+        assert!(filter.contains("y='((h-text_h)/2)+h*0.035*(1-("));
+        assert!(filter.contains("shadowcolor=#000000cc"));
+        assert!(filter.contains("enable='between(t,1.000,4.000)'"));
+    }
+
+    #[test]
+    fn appends_video_border_filter() {
+        let mut clip = Clip::text("test", crate::TextOverlay::default(), 0, 1_000);
+        clip.effects.push(Effect::Border {
+            color: "#ffffff".to_string(),
+            width: 12,
+        });
+        let mut chain = "null".to_string();
+        append_video_effects(&mut chain, &clip, 1.0);
+        assert_eq!(chain, "null,drawbox=x=0:y=0:w=iw:h=ih:color=#ffffff:t=12");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn uses_an_installed_windows_font_when_none_is_configured() {
+        let text = crate::TextOverlay {
+            text: "Windows 字型".to_string(),
+            font_file: None,
+            ..crate::TextOverlay::default()
+        };
+        let filter = drawtext_filter(&text, 0.0, 1.0, 1920, 1080);
+        assert!(filter.contains("fontfile='C\\:/Windows/Fonts/"));
+    }
+
+    #[test]
+    fn maps_corner_text_positions() {
+        let (top_left_x, top_left_y) =
+            text_position(TextPosition::TopLeft, TextAlignment::Center, 1920, 1080);
+        let (bottom_right_x, bottom_right_y) =
+            text_position(TextPosition::BottomRight, TextAlignment::Center, 1920, 1080);
+
+        assert_eq!(top_left_x, "w*0.05");
+        assert_eq!(top_left_y, "h*0.08");
+        assert_eq!(bottom_right_x, "w-text_w-w*0.05");
+        assert_eq!(bottom_right_y, "1080-text_h-h*0.08");
     }
 }

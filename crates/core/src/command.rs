@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Clip, Effect, Millis, Project, Result, RustCutError, TextOverlay, Track, TrackKind};
+use crate::{
+    CaptionPreset, Clip, Effect, Millis, Project, Result, RustCutError, TextAnimation, TextOverlay,
+    TextPosition, Track, TrackKind,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EditPlan {
@@ -68,6 +71,8 @@ pub enum EditCommand {
         asset_id: Uuid,
         #[serde(default)]
         style: TextOverlay,
+        #[serde(default)]
+        preset: CaptionPreset,
     },
     AddText {
         text: TextOverlay,
@@ -75,6 +80,29 @@ pub enum EditCommand {
         end_ms: Millis,
         #[serde(default)]
         track_id: Option<Uuid>,
+    },
+    AddWatermark {
+        text: String,
+        #[serde(default)]
+        font_file: Option<String>,
+        #[serde(default = "default_watermark_position")]
+        position: TextPosition,
+        #[serde(default = "default_watermark_font_size")]
+        font_size: u32,
+        #[serde(default = "default_watermark_color")]
+        color: String,
+        #[serde(default = "default_watermark_opacity")]
+        opacity: f32,
+        #[serde(default)]
+        start_ms: Millis,
+        #[serde(default)]
+        end_ms: Option<Millis>,
+    },
+    AddBorder {
+        #[serde(default = "default_border_color")]
+        color: String,
+        #[serde(default = "default_border_width")]
+        width: u32,
     },
     Reframe {
         width: u32,
@@ -107,6 +135,30 @@ fn default_filler_padding() -> Millis {
 
 fn default_target_lufs() -> f32 {
     -16.0
+}
+
+fn default_watermark_position() -> TextPosition {
+    TextPosition::Bottom
+}
+
+fn default_watermark_font_size() -> u32 {
+    32
+}
+
+fn default_watermark_color() -> String {
+    "white".to_string()
+}
+
+fn default_watermark_opacity() -> f32 {
+    0.65
+}
+
+fn default_border_color() -> String {
+    "white".to_string()
+}
+
+fn default_border_width() -> u32 {
+    12
 }
 
 fn default_fillers() -> Vec<String> {
@@ -224,8 +276,13 @@ fn apply_command_in_place(project: &mut Project, command: &EditCommand) -> Resul
             words,
             padding_ms,
         } => remove_fillers(project, *asset_id, words, *padding_ms)?,
-        EditCommand::AddCaptions { asset_id, style } => {
-            add_captions(project, *asset_id, style.clone())?
+        EditCommand::AddCaptions {
+            asset_id,
+            style,
+            preset,
+        } => {
+            validate_text_overlay(style, true)?;
+            add_captions(project, *asset_id, style.clone(), *preset)?
         }
         EditCommand::AddText {
             text,
@@ -238,6 +295,7 @@ fn apply_command_in_place(project: &mut Project, command: &EditCommand) -> Resul
                     "text end_ms must be greater than start_ms".to_string(),
                 ));
             }
+            validate_text_overlay(text, false)?;
             let track = match track_id {
                 Some(id) => project
                     .timeline
@@ -248,6 +306,89 @@ fn apply_command_in_place(project: &mut Project, command: &EditCommand) -> Resul
             track
                 .clips
                 .push(Clip::text("Text overlay", text.clone(), *start_ms, *end_ms));
+        }
+        EditCommand::AddWatermark {
+            text,
+            font_file,
+            position,
+            font_size,
+            color,
+            opacity,
+            start_ms,
+            end_ms,
+        } => {
+            if text.trim().is_empty() {
+                return Err(RustCutError::Validation(
+                    "watermark text cannot be empty".to_string(),
+                ));
+            }
+            if !(8..=512).contains(font_size) {
+                return Err(RustCutError::Validation(
+                    "watermark font_size must be between 8 and 512".to_string(),
+                ));
+            }
+            if !(0.0..=1.0).contains(opacity) {
+                return Err(RustCutError::Validation(
+                    "watermark opacity must be between 0.0 and 1.0".to_string(),
+                ));
+            }
+            validate_filter_color(color)?;
+            let end_ms = end_ms.unwrap_or_else(|| project.timeline.duration_ms());
+            if end_ms <= *start_ms {
+                return Err(RustCutError::Validation(
+                    "watermark end_ms must be greater than start_ms".to_string(),
+                ));
+            }
+            let overlay = TextOverlay {
+                text: text.trim().to_string(),
+                font_file: font_file.clone(),
+                font_size: *font_size,
+                color: color.clone(),
+                opacity: *opacity,
+                outline_width: 2,
+                position: *position,
+                animation: TextAnimation::None,
+                ..TextOverlay::default()
+            };
+            ensure_track(&mut project.timeline.tracks, TrackKind::Graphic)
+                .clips
+                .push(Clip::text("Watermark", overlay, *start_ms, end_ms));
+        }
+        EditCommand::AddBorder { color, width } => {
+            let max_width = project
+                .timeline
+                .settings
+                .width
+                .min(project.timeline.settings.height)
+                / 4;
+            validate_filter_color(color)?;
+            if *width == 0 || *width > max_width {
+                return Err(RustCutError::Validation(format!(
+                    "border width must be between 1 and {max_width}"
+                )));
+            }
+            let mut applied = false;
+            for track in &mut project.timeline.tracks {
+                if track.kind != TrackKind::Video {
+                    continue;
+                }
+                for clip in &mut track.clips {
+                    if clip.asset_id.is_some() {
+                        clip.effects
+                            .retain(|effect| !matches!(effect, Effect::Border { .. }));
+                        clip.effects.push(Effect::Border {
+                            color: color.clone(),
+                            width: *width,
+                        });
+                        applied = true;
+                    }
+                }
+            }
+            if !applied {
+                return Err(RustCutError::Validation(
+                    "timeline has no video clips for a border".to_string(),
+                ));
+            }
         }
         EditCommand::Reframe { width, height } => {
             if *width < 64 || *height < 64 {
@@ -298,6 +439,101 @@ fn ensure_track(tracks: &mut Vec<Track>, kind: TrackKind) -> &mut Track {
     };
     tracks.push(Track::new(format!("{prefix}{}", order + 1), kind, order));
     tracks.last_mut().expect("track was just pushed")
+}
+
+fn validate_text_overlay(text: &TextOverlay, allow_empty: bool) -> Result<()> {
+    if !allow_empty && text.text.trim().is_empty() {
+        return Err(RustCutError::Validation(
+            "text overlay cannot be empty".to_string(),
+        ));
+    }
+    if !(8..=512).contains(&text.font_size) {
+        return Err(RustCutError::Validation(
+            "text font_size must be between 8 and 512".to_string(),
+        ));
+    }
+    if !(0.0..=1.0).contains(&text.opacity) {
+        return Err(RustCutError::Validation(
+            "text opacity must be between 0.0 and 1.0".to_string(),
+        ));
+    }
+    if text.animation != TextAnimation::None && text.animation_duration_ms == 0 {
+        return Err(RustCutError::Validation(
+            "animated text requires animation_duration_ms greater than 0".to_string(),
+        ));
+    }
+    validate_filter_color(&text.color)?;
+    validate_filter_color(&text.outline_color)?;
+    if let Some(color) = &text.box_color {
+        validate_filter_color(color)?;
+    }
+    if let Some(color) = &text.shadow_color {
+        validate_filter_color(color)?;
+    }
+    Ok(())
+}
+
+fn validate_filter_color(color: &str) -> Result<()> {
+    let color = color.trim();
+    let mut parts = color.split('@');
+    let base = parts.next().unwrap_or_default();
+    let alpha = parts.next();
+    if parts.next().is_some() {
+        return Err(RustCutError::Validation(
+            "color must be an FFmpeg color name or hexadecimal value".to_string(),
+        ));
+    }
+    if let Some(alpha) = alpha {
+        let alpha = alpha.parse::<f32>().map_err(|_| {
+            RustCutError::Validation("color alpha must be between 0.0 and 1.0".to_string())
+        })?;
+        if !(0.0..=1.0).contains(&alpha) {
+            return Err(RustCutError::Validation(
+                "color alpha must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+    }
+    let valid_hex = base.strip_prefix('#').is_some_and(|hex| {
+        matches!(hex.len(), 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
+    });
+    let valid_0x = base
+        .strip_prefix("0x")
+        .or_else(|| base.strip_prefix("0X"))
+        .is_some_and(|hex| {
+            matches!(hex.len(), 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
+        });
+    let valid_name = matches!(
+        base.to_ascii_lowercase().as_str(),
+        "black"
+            | "white"
+            | "red"
+            | "green"
+            | "blue"
+            | "yellow"
+            | "cyan"
+            | "magenta"
+            | "gray"
+            | "grey"
+            | "orange"
+            | "purple"
+            | "pink"
+            | "lime"
+            | "navy"
+            | "teal"
+            | "silver"
+            | "maroon"
+            | "olive"
+            | "aqua"
+            | "fuchsia"
+            | "transparent"
+    );
+    if !(valid_hex || valid_0x || valid_name) {
+        return Err(RustCutError::Validation(
+            "color must be a supported name, #RRGGBB, #RRGGBBAA, 0xRRGGBB, or 0xRRGGBBAA"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn find_clip_location(project: &Project, clip_id: Uuid) -> Result<(usize, usize)> {
@@ -451,7 +687,12 @@ fn replace_asset_clips_with_ranges(
     Ok(())
 }
 
-fn add_captions(project: &mut Project, asset_id: Uuid, mut style: TextOverlay) -> Result<()> {
+fn add_captions(
+    project: &mut Project,
+    asset_id: Uuid,
+    style: TextOverlay,
+    preset: CaptionPreset,
+) -> Result<()> {
     let transcript = project
         .transcripts
         .get(&asset_id)
@@ -467,32 +708,149 @@ fn add_captions(project: &mut Project, asset_id: Uuid, mut style: TextOverlay) -
         .filter(|clip| clip.asset_id == Some(asset_id))
         .cloned()
         .collect();
+    if video_clips.is_empty() {
+        return Err(RustCutError::Validation(
+            "asset is not present on a video track".to_string(),
+        ));
+    }
+
+    let style = caption_style_for_preset(style, preset);
+    let mut generated = Vec::new();
+    for media_clip in video_clips {
+        for segment in &transcript.segments {
+            let uses_words = matches!(preset, CaptionPreset::Karaoke | CaptionPreset::WordPop)
+                && !segment.words.is_empty();
+            if uses_words {
+                let generated_before_words = generated.len();
+                for word in &segment.words {
+                    push_caption(
+                        &mut generated,
+                        &media_clip,
+                        asset_id,
+                        &style,
+                        word.text.trim(),
+                        word.start_ms,
+                        word.end_ms,
+                        preset,
+                    );
+                }
+                if generated.len() == generated_before_words {
+                    push_caption(
+                        &mut generated,
+                        &media_clip,
+                        asset_id,
+                        &style,
+                        segment.text.trim(),
+                        segment.start_ms,
+                        segment.end_ms,
+                        preset,
+                    );
+                }
+            } else {
+                push_caption(
+                    &mut generated,
+                    &media_clip,
+                    asset_id,
+                    &style,
+                    segment.text.trim(),
+                    segment.start_ms,
+                    segment.end_ms,
+                    preset,
+                );
+            }
+        }
+    }
 
     let caption_track = ensure_track(&mut project.timeline.tracks, TrackKind::Caption);
     caption_track
         .clips
         .retain(|clip| clip.asset_id != Some(asset_id));
+    caption_track.clips.extend(generated);
+    Ok(())
+}
 
-    for media_clip in video_clips {
-        for segment in &transcript.segments {
-            let source_start = segment.start_ms.max(media_clip.source_in_ms);
-            let source_end = segment.end_ms.min(media_clip.source_out_ms);
-            if source_end <= source_start {
-                continue;
-            }
-            let timeline_start = media_clip.start_ms
-                + ((source_start - media_clip.source_in_ms) as f64 / media_clip.speed).round()
-                    as Millis;
-            let timeline_end = media_clip.start_ms
-                + ((source_end - media_clip.source_in_ms) as f64 / media_clip.speed).round()
-                    as Millis;
-            style.text = segment.text.trim().to_string();
-            let mut caption = Clip::text("Caption", style.clone(), timeline_start, timeline_end);
-            caption.asset_id = Some(asset_id);
-            caption_track.clips.push(caption);
+#[allow(clippy::too_many_arguments)]
+fn push_caption(
+    output: &mut Vec<Clip>,
+    media_clip: &Clip,
+    asset_id: Uuid,
+    base_style: &TextOverlay,
+    text: &str,
+    source_start_ms: Millis,
+    source_end_ms: Millis,
+    preset: CaptionPreset,
+) {
+    let source_start = source_start_ms.max(media_clip.source_in_ms);
+    let source_end = source_end_ms.min(media_clip.source_out_ms);
+    if text.is_empty() || source_end <= source_start {
+        return;
+    }
+
+    let timeline_start = source_to_timeline(media_clip, source_start);
+    let timeline_end = source_to_timeline(media_clip, source_end);
+    if timeline_end <= timeline_start {
+        return;
+    }
+
+    let mut style = base_style.clone();
+    style.text = text.to_string();
+    let name = match preset {
+        CaptionPreset::Karaoke => "Karaoke Caption",
+        CaptionPreset::WordPop => "Word Pop Caption",
+        _ => "Caption",
+    };
+    let mut caption = Clip::text(name, style, timeline_start, timeline_end);
+    caption.asset_id = Some(asset_id);
+    output.push(caption);
+}
+
+fn source_to_timeline(media_clip: &Clip, source_ms: Millis) -> Millis {
+    media_clip.start_ms
+        + ((source_ms - media_clip.source_in_ms) as f64 / media_clip.speed).round() as Millis
+}
+
+fn caption_style_for_preset(mut style: TextOverlay, preset: CaptionPreset) -> TextOverlay {
+    match preset {
+        CaptionPreset::Standard => {}
+        CaptionPreset::Hormozi => {
+            style.font_size = style.font_size.max(84);
+            style.position = TextPosition::Center;
+            style.outline_width = style.outline_width.max(6);
+            style.box_color = None;
+            style.shadow_color = Some("#000000cc".to_string());
+            style.shadow_x = 5;
+            style.shadow_y = 5;
+            style.animation = TextAnimation::Pop;
+            style.animation_duration_ms = 260;
+        }
+        CaptionPreset::Minimal => {
+            style.font_size = style.font_size.min(48);
+            style.opacity = style.opacity.min(0.92);
+            style.outline_width = style.outline_width.min(2);
+            style.box_color = None;
+            style.shadow_color = None;
+            style.animation = TextAnimation::Fade;
+            style.animation_duration_ms = 240;
+        }
+        CaptionPreset::Karaoke => {
+            style.font_size = style.font_size.max(72);
+            style.color = "#ffff00".to_string();
+            style.position = TextPosition::LowerThird;
+            style.outline_width = style.outline_width.max(5);
+            style.box_color = None;
+            style.animation = TextAnimation::Fade;
+            style.animation_duration_ms = 160;
+        }
+        CaptionPreset::WordPop => {
+            style.font_size = style.font_size.max(84);
+            style.position = TextPosition::Center;
+            style.outline_width = style.outline_width.max(6);
+            style.box_color = None;
+            style.animation = TextAnimation::Pop;
+            style.animation_duration_ms = 220;
         }
     }
-    Ok(())
+    style
 }
 
 fn normalize_word(input: &str) -> String {
@@ -655,5 +1013,268 @@ mod tests {
         assert_eq!(clips.len(), 2);
         assert_eq!(clips[0].source_out_ms, 1_000);
         assert_eq!(clips[1].source_in_ms, 1_300);
+    }
+
+    #[test]
+    fn creates_caption_clips_from_imported_transcript() {
+        let (mut project, asset_id) = test_project();
+        let style = TextOverlay {
+            animation: TextAnimation::Fade,
+            box_color: Some("#00000099".to_string()),
+            ..TextOverlay::default()
+        };
+        apply_commands(
+            &mut project,
+            &[EditCommand::AddCaptions {
+                asset_id,
+                style,
+                preset: CaptionPreset::Standard,
+            }],
+        )
+        .unwrap();
+
+        let captions = &project
+            .timeline
+            .first_track_of_kind(TrackKind::Caption)
+            .unwrap()
+            .clips;
+        assert_eq!(captions.len(), 1);
+        assert_eq!(captions[0].start_ms, 1_000);
+        assert_eq!(captions[0].end_ms(), 4_000);
+        assert_eq!(captions[0].text.as_ref().unwrap().text, "嗯 測試");
+        assert_eq!(
+            captions[0].text.as_ref().unwrap().animation,
+            TextAnimation::Fade
+        );
+    }
+
+    #[test]
+    fn rejects_captions_when_asset_is_not_on_video_timeline() {
+        let (mut project, asset_id) = test_project();
+        project
+            .timeline
+            .first_track_of_kind_mut(TrackKind::Video)
+            .unwrap()
+            .clips
+            .clear();
+        let error = apply_commands(
+            &mut project,
+            &[EditCommand::AddCaptions {
+                asset_id,
+                style: TextOverlay::default(),
+                preset: CaptionPreset::Standard,
+            }],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not present on a video track"));
+    }
+
+    #[test]
+    fn creates_word_synchronized_pop_captions() {
+        let (mut project, asset_id) = test_project();
+        apply_commands(
+            &mut project,
+            &[EditCommand::AddCaptions {
+                asset_id,
+                style: TextOverlay::default(),
+                preset: CaptionPreset::WordPop,
+            }],
+        )
+        .unwrap();
+
+        let captions = &project
+            .timeline
+            .first_track_of_kind(TrackKind::Caption)
+            .unwrap()
+            .clips;
+        assert_eq!(captions.len(), 2);
+        assert_eq!((captions[0].start_ms, captions[0].end_ms()), (1_000, 1_300));
+        assert_eq!((captions[1].start_ms, captions[1].end_ms()), (1_500, 2_000));
+        assert_eq!(captions[0].text.as_ref().unwrap().text, "嗯");
+        assert_eq!(
+            captions[0].text.as_ref().unwrap().animation,
+            TextAnimation::Pop
+        );
+        assert_eq!(captions[0].text.as_ref().unwrap().font_size, 84);
+    }
+
+    #[test]
+    fn creates_word_synchronized_karaoke_highlights() {
+        let (mut project, asset_id) = test_project();
+        apply_commands(
+            &mut project,
+            &[EditCommand::AddCaptions {
+                asset_id,
+                style: TextOverlay::default(),
+                preset: CaptionPreset::Karaoke,
+            }],
+        )
+        .unwrap();
+
+        let captions = &project
+            .timeline
+            .first_track_of_kind(TrackKind::Caption)
+            .unwrap()
+            .clips;
+        assert_eq!(captions.len(), 2);
+        assert!(
+            captions
+                .iter()
+                .all(|clip| clip.text.as_ref().unwrap().color == "#ffff00")
+        );
+        assert_eq!(captions[1].text.as_ref().unwrap().text, "測試");
+    }
+
+    #[test]
+    fn word_preset_falls_back_when_all_words_are_invalid() {
+        let (mut project, asset_id) = test_project();
+        project.transcripts.get_mut(&asset_id).unwrap().segments[0].words = vec![TranscriptWord {
+            start_ms: 2_000,
+            end_ms: 2_000,
+            text: String::new(),
+            confidence: None,
+        }];
+
+        apply_commands(
+            &mut project,
+            &[EditCommand::AddCaptions {
+                asset_id,
+                style: TextOverlay::default(),
+                preset: CaptionPreset::WordPop,
+            }],
+        )
+        .unwrap();
+
+        let captions = &project
+            .timeline
+            .first_track_of_kind(TrackKind::Caption)
+            .unwrap()
+            .clips;
+        assert_eq!(captions.len(), 1);
+        assert_eq!(captions[0].text.as_ref().unwrap().text, "嗯 測試");
+        assert_eq!((captions[0].start_ms, captions[0].end_ms()), (1_000, 4_000));
+    }
+
+    #[test]
+    fn add_captions_json_defaults_to_standard_preset() {
+        let asset_id = Uuid::new_v4();
+        let command: EditCommand = serde_json::from_value(serde_json::json!({
+            "type": "add_captions",
+            "asset_id": asset_id,
+            "style": {}
+        }))
+        .unwrap();
+        assert!(matches!(
+            command,
+            EditCommand::AddCaptions {
+                preset: CaptionPreset::Standard,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn adds_watermark_and_border_as_reversible_timeline_edits() {
+        let (mut project, _) = test_project();
+        apply_commands(
+            &mut project,
+            &[
+                EditCommand::AddWatermark {
+                    text: "RustCut".to_string(),
+                    font_file: Some("C:/Windows/Fonts/msjh.ttc".to_string()),
+                    position: TextPosition::Top,
+                    font_size: 30,
+                    color: "#ffffff".to_string(),
+                    opacity: 0.55,
+                    start_ms: 0,
+                    end_ms: None,
+                },
+                EditCommand::AddBorder {
+                    color: "#8d7bff".to_string(),
+                    width: 16,
+                },
+            ],
+        )
+        .unwrap();
+
+        let watermark = project
+            .timeline
+            .first_track_of_kind(TrackKind::Graphic)
+            .unwrap()
+            .clips
+            .iter()
+            .find(|clip| clip.name == "Watermark")
+            .unwrap();
+        assert_eq!(watermark.end_ms(), 10_000);
+        assert_eq!(watermark.text.as_ref().unwrap().opacity, 0.55);
+
+        let video = &project
+            .timeline
+            .first_track_of_kind(TrackKind::Video)
+            .unwrap()
+            .clips[0];
+        assert!(matches!(
+            video.effects.last(),
+            Some(Effect::Border { color, width }) if color == "#8d7bff" && *width == 16
+        ));
+
+        assert!(project.undo());
+        assert!(
+            project
+                .timeline
+                .first_track_of_kind(TrackKind::Graphic)
+                .unwrap()
+                .clips
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn text_commands_accept_legacy_style_fields() {
+        let command: EditCommand = serde_json::from_value(serde_json::json!({
+            "type": "add_text",
+            "text": {
+                "text": "相容舊專案",
+                "font_size": 48,
+                "position": "center",
+                "alignment": "center"
+            },
+            "start_ms": 0,
+            "end_ms": 1000
+        }))
+        .unwrap();
+
+        let EditCommand::AddText { text, .. } = command else {
+            panic!("expected add_text");
+        };
+        assert_eq!(text.animation, TextAnimation::None);
+        assert_eq!(text.opacity, 1.0);
+        assert_eq!(text.box_padding, 20);
+    }
+
+    #[test]
+    fn rejects_filter_color_injection() {
+        let (mut project, _) = test_project();
+        let error = apply_commands(
+            &mut project,
+            &[EditCommand::AddBorder {
+                color: "white,drawtext=text=oops".to_string(),
+                width: 12,
+            }],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("color must be"));
+
+        for color in ["notacolor", "red@999", "#12345"] {
+            let error = apply_commands(
+                &mut project,
+                &[EditCommand::AddBorder {
+                    color: color.to_string(),
+                    width: 12,
+                }],
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("color"));
+        }
     }
 }

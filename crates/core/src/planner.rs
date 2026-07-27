@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::{EditCommand, EditPlan, Project, Result, RustCutError, TextOverlay, TextPosition};
+use crate::{
+    CaptionPreset, EditCommand, EditPlan, Project, Result, RustCutError, TextAnimation,
+    TextOverlay, TextPosition,
+};
 
 #[async_trait]
 pub trait Planner: Send + Sync {
@@ -86,6 +89,7 @@ impl Planner for RulePlanner {
         if contains_any(&normalized, &["字幕", "caption", "subtitles"])
             && let Some(asset_id) = asset_id
         {
+            let preset = caption_preset_from_prompt(&normalized);
             let style = TextOverlay {
                 position: TextPosition::Bottom,
                 font_size: if normalized.contains("直式") || normalized.contains("9:16") {
@@ -95,8 +99,18 @@ impl Planner for RulePlanner {
                 },
                 ..TextOverlay::default()
             };
-            commands.push(EditCommand::AddCaptions { asset_id, style });
-            actions.push("產生逐段字幕");
+            commands.push(EditCommand::AddCaptions {
+                asset_id,
+                style,
+                preset,
+            });
+            actions.push(match preset {
+                CaptionPreset::Karaoke => "產生逐字卡拉 OK 字幕",
+                CaptionPreset::WordPop => "產生逐字彈出字幕",
+                CaptionPreset::Hormozi => "產生 Hormozi 衝擊字幕",
+                CaptionPreset::Minimal => "產生極簡字幕",
+                CaptionPreset::Standard => "產生逐段字幕",
+            });
         }
 
         if contains_any(&normalized, &["直式", "9:16", "tiktok", "reels", "shorts"]) {
@@ -127,13 +141,46 @@ impl Planner for RulePlanner {
             actions.push("套用音量正規化");
         }
 
+        if contains_any(&normalized, &["邊框", "畫框", "border", "frame border"]) {
+            commands.push(EditCommand::AddBorder {
+                color: "white".to_string(),
+                width: 12,
+            });
+            actions.push("加入全片邊框");
+        }
+
+        if let Some(watermark) = extract_quoted_text(prompt)
+            && contains_any(&normalized, &["浮水印", "watermark"])
+        {
+            commands.push(EditCommand::AddWatermark {
+                text: watermark,
+                font_file: None,
+                position: TextPosition::Bottom,
+                font_size: 32,
+                color: "white".to_string(),
+                opacity: 0.65,
+                start_ms: 0,
+                end_ms: None,
+            });
+            actions.push("加入全片浮水印");
+        }
+
         if let Some(title) = extract_quoted_text(prompt)
-            && contains_any(&normalized, &["標題", "title", "片頭文字", "文字"])
+            && contains_any(
+                &normalized,
+                &["動態字卡", "字卡", "標題", "title", "片頭文字", "文字"],
+            )
+            && !contains_any(&normalized, &["浮水印", "watermark"])
         {
             let text = TextOverlay {
                 text: title,
                 position: TextPosition::Center,
                 font_size: 96,
+                animation: if contains_any(&normalized, &["動態", "animated"]) {
+                    TextAnimation::Pop
+                } else {
+                    TextAnimation::None
+                },
                 ..TextOverlay::default()
             };
             commands.push(EditCommand::AddText {
@@ -204,7 +251,9 @@ The response schema is:
 Allowed EditCommand values use a tagged `type` field:
 add_asset_to_timeline, trim_clip, split_clip, delete_clip, move_clip, set_volume,
 set_speed, remove_silence, remove_fillers, add_captions, add_text, reframe,
-add_fade, normalize_audio.
+add_watermark, add_border, add_fade, normalize_audio.
+Text overlays support animation values: none, fade, slide_up, slide_left, pop.
+add_captions supports preset values: standard, hormozi, minimal, karaoke, word_pop.
 Use only UUIDs present in the project context. Do not invent assets, tracks, or clips.
 Prefer reversible timeline edits. Keep all time values in milliseconds."#;
 
@@ -362,6 +411,26 @@ fn contains_any(input: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| input.contains(needle))
 }
 
+fn caption_preset_from_prompt(input: &str) -> CaptionPreset {
+    if contains_any(
+        input,
+        &["逐字彈出", "彈跳字幕", "word pop", "word-pop", "word_pop"],
+    ) {
+        CaptionPreset::WordPop
+    } else if contains_any(
+        input,
+        &["卡拉ok", "卡拉 ok", "karaoke", "逐字高亮", "逐字高亮字幕"],
+    ) {
+        CaptionPreset::Karaoke
+    } else if contains_any(input, &["hormozi", "荷莫茲", "衝擊字幕", "大字字幕"]) {
+        CaptionPreset::Hormozi
+    } else if contains_any(input, &["極簡字幕", "minimal caption", "minimal subtitles"]) {
+        CaptionPreset::Minimal
+    } else {
+        CaptionPreset::Standard
+    }
+}
+
 fn extract_quoted_text(input: &str) -> Option<String> {
     let pairs = [('「', '」'), ('“', '”'), ('"', '"'), ('\'', '\'')];
     for (open, close) in pairs {
@@ -410,11 +479,55 @@ mod tests {
         )));
     }
 
+    #[tokio::test]
+    async fn rule_planner_understands_visual_effect_requests() {
+        let project = Project::new("demo", TimelineSettings::default());
+        let plan = RulePlanner
+            .plan(&project, "加入紫色邊框與浮水印「RustCut」")
+            .await
+            .unwrap();
+        assert!(
+            plan.commands
+                .iter()
+                .any(|command| matches!(command, EditCommand::AddBorder { .. }))
+        );
+        assert!(plan.commands.iter().any(|command| matches!(
+            command,
+            EditCommand::AddWatermark { text, .. } if text == "RustCut"
+        )));
+        assert!(
+            !plan
+                .commands
+                .iter()
+                .any(|command| matches!(command, EditCommand::AddText { .. }))
+        );
+    }
+
     #[test]
     fn extracts_chinese_title() {
         assert_eq!(
             extract_quoted_text("新增標題「Rust 影片剪輯」"),
             Some("Rust 影片剪輯".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_caption_skill_presets() {
+        assert_eq!(
+            caption_preset_from_prompt("幫我做逐字彈出字幕"),
+            CaptionPreset::WordPop
+        );
+        assert_eq!(
+            caption_preset_from_prompt("use karaoke captions"),
+            CaptionPreset::Karaoke
+        );
+        assert_eq!(
+            caption_preset_from_prompt("套用 Hormozi 衝擊字幕"),
+            CaptionPreset::Hormozi
+        );
+        assert_eq!(
+            caption_preset_from_prompt("極簡字幕"),
+            CaptionPreset::Minimal
         );
     }
 }

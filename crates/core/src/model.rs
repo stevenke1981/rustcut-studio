@@ -345,16 +345,24 @@ impl Default for Transform {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct TextOverlay {
     pub text: String,
     pub font_file: Option<String>,
     pub font_size: u32,
     pub color: String,
+    pub opacity: f32,
     pub outline_color: String,
     pub outline_width: u32,
     pub box_color: Option<String>,
+    pub box_padding: u32,
+    pub shadow_color: Option<String>,
+    pub shadow_x: i32,
+    pub shadow_y: i32,
     pub position: TextPosition,
     pub alignment: TextAlignment,
+    pub animation: TextAnimation,
+    pub animation_duration_ms: Millis,
 }
 
 impl Default for TextOverlay {
@@ -364,21 +372,43 @@ impl Default for TextOverlay {
             font_file: None,
             font_size: 64,
             color: "white".to_string(),
+            opacity: 1.0,
             outline_color: "black".to_string(),
             outline_width: 4,
             box_color: None,
+            box_padding: 20,
+            shadow_color: None,
+            shadow_x: 3,
+            shadow_y: 3,
             position: TextPosition::Bottom,
             alignment: TextAlignment::Center,
+            animation: TextAnimation::None,
+            animation_duration_ms: 350,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionPreset {
+    #[default]
+    Standard,
+    Hormozi,
+    Minimal,
+    Karaoke,
+    WordPop,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum TextPosition {
     Top,
+    TopLeft,
+    TopRight,
     Center,
     Bottom,
+    BottomLeft,
+    BottomRight,
     LowerThird,
 }
 
@@ -388,6 +418,17 @@ pub enum TextAlignment {
     Left,
     Center,
     Right,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAnimation {
+    #[default]
+    None,
+    Fade,
+    SlideUp,
+    SlideLeft,
+    Pop,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -405,5 +446,9 @@ pub enum Effect {
         y: u32,
         width: u32,
         height: u32,
+    },
+    Border {
+        color: String,
+        width: u32,
     },
 }

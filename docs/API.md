@@ -91,25 +91,68 @@ Content-Type: application/json
   "commands": [
     { "type": "reframe", "width": 1080, "height": 1920 },
     {
+      "type": "add_captions",
+      "asset_id": "ASSET_UUID",
+      "preset": "word_pop",
+      "style": {
+        "font_size": 84,
+        "color": "#ffffff",
+        "outline_color": "#000000",
+        "outline_width": 6,
+        "position": "center"
+      }
+    },
+    {
       "type": "add_text",
       "text": {
         "text": "RustCut",
         "font_file": null,
         "font_size": 96,
         "color": "white",
+        "opacity": 1.0,
         "outline_color": "black",
         "outline_width": 4,
         "box_color": null,
+        "box_padding": 20,
+        "shadow_color": null,
+        "shadow_x": 3,
+        "shadow_y": 3,
         "position": "center",
-        "alignment": "center"
+        "alignment": "center",
+        "animation": "pop",
+        "animation_duration_ms": 420
       },
       "start_ms": 0,
       "end_ms": 3000,
       "track_id": null
+    },
+    {
+      "type": "add_border",
+      "color": "#ffffff",
+      "width": 12
+    },
+    {
+      "type": "add_watermark",
+      "text": "RustCut Studio",
+      "font_file": "C:/Windows/Fonts/msjh.ttc",
+      "position": "bottom",
+      "font_size": 32,
+      "color": "#ffffff",
+      "opacity": 0.65,
+      "start_ms": 0,
+      "end_ms": null
     }
   ]
 }
 ```
+
+`add_captions.preset` 可用值為 `standard`、`hormozi`、`minimal`、`karaoke`
+與 `word_pop`。未指定時維持向後相容並使用 `standard`。`karaoke` 與
+`word_pop` 會優先使用逐字稿的 word timestamps；若逐字資料不存在則退回逐段字幕。
+
+`animation` 可使用 `none`、`fade`、`slide_up`、`slide_left` 或 `pop`。
+`add_border` 會套用至時間軸上的影片片段；`add_watermark` 的 `end_ms: null`
+代表持續到時間軸結尾。
 
 ## Render
 
