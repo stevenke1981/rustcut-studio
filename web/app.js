@@ -42,6 +42,7 @@ async function loadProject(id) {
 function renderProject() {
   const project = state.project;
   if (!project) {
+    $("#previewMeta").textContent = "選取素材後開始編輯";
     $("#assetList").className = "asset-list empty-state";
     $("#assetList").textContent = "請先新增專案";
     $("#timeline").className = "timeline empty-state";
@@ -49,6 +50,8 @@ function renderProject() {
     return;
   }
   const assets = Object.values(project.assets || {});
+  const clipCount = project.timeline.tracks.reduce((total, track) => total + track.clips.length, 0);
+  $("#previewMeta").textContent = `${assets.length} 個素材 · ${clipCount} 個時間軸片段`;
   $("#assetCount").textContent = assets.length;
   $("#projectMeta").textContent = `${project.timeline.settings.width}×${project.timeline.settings.height} · ${project.timeline.settings.fps} fps · rev ${project.revision}`;
   renderAssets(assets);

@@ -7,19 +7,26 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
+  <a class="skip-link" href="#workspace">跳到編輯工作區</a>
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark">R</span>
-      <div><strong>RustCut Studio</strong><small>Prompt-driven editor</small></div>
+      <div><strong>RustCut Studio</strong><small>AI video workspace</small></div>
     </div>
-    <select id="projectSelect" aria-label="選擇專案"></select>
-    <button id="newProjectBtn">新增專案</button>
-    <span id="status" class="status">就緒</span>
+    <div class="project-context">
+      <span class="workspace-label">編輯工作區</span>
+      <select id="projectSelect" aria-label="選擇專案"></select>
+    </div>
+    <div class="topbar-actions">
+      <span id="status" class="status" aria-live="polite">就緒</span>
+      <button id="newProjectBtn" class="secondary">新增專案</button>
+      <button id="renderBtn" class="primary">輸出 MP4</button>
+    </div>
   </header>
 
-  <main class="workspace">
+  <main id="workspace" class="workspace">
     <aside class="panel assets-panel">
-      <div class="panel-title"><h2>素材</h2><span id="assetCount">0</span></div>
+      <div class="panel-title"><div><span class="eyebrow">PROJECT MEDIA</span><h2>素材</h2></div><span id="assetCount" class="count-badge">0</span></div>
       <form id="importForm" class="stack-form">
         <label>本機素材路徑<input id="mediaPath" placeholder="C:\\video\\interview.mp4" required /></label>
         <button type="submit">匯入素材</button>
@@ -87,6 +94,10 @@
     </aside>
 
     <section class="editor-panel">
+      <div class="stage-toolbar">
+        <div><span class="eyebrow">LIVE PREVIEW</span><strong id="previewMeta">選取素材後開始編輯</strong></div>
+        <span class="stage-hint">預覽、時間軸與輸出會同步更新</span>
+      </div>
       <div class="viewer-wrap">
         <video id="viewer" controls playsinline></video>
         <div id="viewerEmpty" class="viewer-empty">選擇素材以預覽</div>
@@ -96,7 +107,6 @@
         <button id="undoBtn">復原</button>
         <button id="redoBtn">重做</button>
         <span id="projectMeta">—</span>
-        <button id="renderBtn" class="primary">輸出 MP4</button>
       </div>
       <div class="timeline-header">
         <strong>時間軸</strong>
@@ -106,8 +116,9 @@
     </section>
 
     <aside class="panel chat-panel">
-      <div class="panel-title"><h2>AI 剪輯助理</h2><select id="plannerSelect"><option value="rule">規則</option><option value="llm">LLM</option></select></div>
-      <div id="chatLog" class="chat-log">
+      <div class="panel-title"><div><span class="eyebrow">CREATIVE COPILOT</span><h2>AI 剪輯助理</h2></div><select id="plannerSelect" aria-label="選擇規劃器"><option value="rule">規則</option><option value="llm">LLM</option></select></div>
+      <div class="assistant-note">用一句話描述節奏、字幕、比例或特效；每次變更都能復原。</div>
+      <div id="chatLog" class="chat-log" role="log" aria-live="polite" aria-relevant="additions">
         <article class="message assistant">輸入：「移除靜音、刪除贅詞、加字幕，改成 9:16」。每次操作都會落在可復原的時間軸。</article>
       </div>
       <form id="chatForm" class="chat-form">
