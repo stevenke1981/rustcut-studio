@@ -81,7 +81,13 @@ jobs:
             tag="build-${BUILD_SHA}"
             options=(--prerelease --latest=false)
           fi
-          if ! gh release view "$tag" >/dev/null 2>&1; then
+          if gh release view "$tag" --json isDraft,assets > release.json 2>/dev/null; then
+            if [[ "$(jq -r '.isDraft' release.json)" == false ]]; then
+              jq -e '(.assets | length) == 4 and any(.assets[]; .name == "SHA256SUMS.txt")' release.json
+              echo "Release already published; preserving existing assets."
+              exit 0
+            fi
+          else
             gh release create "$tag" --target "$BUILD_SHA" --title "$tag" --generate-notes --draft "${options[@]}"
           fi
           gh release upload "$tag" dist/* --clobber
