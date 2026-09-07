@@ -6,8 +6,10 @@ $version = if ($versionMatch) { $versionMatch.Matches[0].Groups[1].Value } else 
 $name = "rustcut-studio-$version-windows-$env:PROCESSOR_ARCHITECTURE"
 $stage = Join-Path "dist" $name
 
-cargo test --workspace
-cargo build --release --workspace
+cargo test --locked --workspace
+if ($LASTEXITCODE -ne 0) { throw "Cargo tests failed; packaging aborted" }
+cargo build --locked --release --workspace
+if ($LASTEXITCODE -ne 0) { throw "Cargo build failed; packaging aborted" }
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item (Join-Path $stage "bin") -ItemType Directory -Force | Out-Null
 

@@ -12,8 +12,8 @@ ARCH="$(uname -m)"
 NAME="rustcut-studio-${VERSION}-${OS}-${ARCH}"
 STAGE="dist/${NAME}"
 
-cargo test --workspace
-cargo build --release --workspace
+cargo test --locked --workspace
+cargo build --locked --release --workspace
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin"
 

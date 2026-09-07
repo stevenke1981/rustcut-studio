@@ -29,10 +29,15 @@ FFmpeg is not redistributed. Install it separately or place licensed binaries be
 
 ## GitHub release
 
-1. Push a tag such as `v0.1.0`.
-2. `.github/workflows/release.yml` builds three OS targets.
-3. Each runner executes the platform packaging script.
-4. The workflow uploads archives to the GitHub Release.
+1. Every push to `main` builds a prerelease named `build-<commit SHA>` automatically.
+2. Push a tag such as `v0.1.0` to publish a stable release, or manually run Release in Actions.
+3. Windows, Linux and macOS run formatting, Clippy, frontend syntax, locked dependency tests and release builds.
+4. Publication waits for all three platform packages. Archives and `SHA256SUMS.txt` are uploaded to a draft before publication. Failed builds do not publish a release.
+5. Reruns reuse the same commit-based release. Preview releases do not replace the latest stable release.
+
+Packages use the runner's native architecture (Windows/Linux x64 and macOS ARM64).
+Download the matching archive from https://github.com/stevenke1981/rustcut-studio/releases.
+Install FFmpeg separately. Automatic releases need only the built-in GitHub token; no extra secret is required.
 
 ## Container release
 
